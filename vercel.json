@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "pnpm build",
+  "installCommand": "pnpm install",
+  "regions": ["iad1"],
+  "functions": {
+    "src/app/api/webhooks/twilio/**/*.ts": {
+      "maxDuration": 30
+    },
+    "src/app/api/calls/[id]/stream/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

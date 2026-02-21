@@ -15,6 +15,8 @@ interface ActiveCallMonitorProps {
   call: Call;
   onBack?: () => void;
   onEnd?: () => void;
+  elapsedSeconds?: number;
+  audioLevel?: number;
 }
 
 function formatTime(seconds: number): string {
@@ -27,25 +29,36 @@ export function ActiveCallMonitor({
   call,
   onBack,
   onEnd,
+  elapsedSeconds: externalElapsed,
+  audioLevel: externalAudioLevel,
 }: ActiveCallMonitorProps) {
-  // Simulated real-time state (in production: SSE from /api/calls/[id]/status)
-  const [elapsed, setElapsed] = useState(0);
-  const [audioLevel, setAudioLevel] = useState(0.3);
-  const [userState, setUserState] = useState<UserCallState>("muted");
-  const [botState, setBotState] = useState<BotState>("active");
-  const [companyState, setCompanyState] = useState<CompanyState>(
-    call.status === "holding" ? "hold" : call.status === "human" ? "human" : "ringing"
-  );
+  // Use external values if provided, otherwise simulate
+  const [internalElapsed, setInternalElapsed] = useState(0);
+  const [internalAudioLevel, setInternalAudioLevel] = useState(0.3);
+  
+  const elapsed = externalElapsed ?? internalElapsed;
+  const audioLevelValue = externalAudioLevel ?? internalAudioLevel;
 
-  // Timer effect
+  // Derive states from call status
+  const userState: UserCallState = call.status === "live" ? "live" : "muted";
+  const botState: BotState = call.status === "ended" || call.status === "failed" ? "idle" : "active";
+  const companyState: CompanyState = 
+    call.status === "holding" || call.status === "navigating" 
+      ? "hold" 
+      : call.status === "human" || call.status === "live"
+      ? "human" 
+      : "ringing";
+
+  // Timer effect (fallback if no external elapsed)
   useEffect(() => {
+    if (externalElapsed !== undefined) return;
+    
     const interval = setInterval(() => {
-      setElapsed((e) => e + 1);
-      // Simulate audio level fluctuation
-      setAudioLevel(0.2 + Math.random() * 0.5);
+      setInternalElapsed((e) => e + 1);
+      setInternalAudioLevel(0.2 + Math.random() * 0.5);
     }, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [externalElapsed]);
 
   const isHolding = companyState === "hold";
   const isHuman = companyState === "human" || userState === "live";
@@ -120,7 +133,7 @@ export function ActiveCallMonitor({
           <Card className="p-4 mb-6">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-muted-foreground">Hold music detected</span>
-              <AudioVisualizer level={audioLevel} isActive={isHolding} />
+              <AudioVisualizer level={audioLevelValue} isActive={isHolding} />
             </div>
             <p className="text-xs text-muted-foreground text-center">
               Listening for human voice...

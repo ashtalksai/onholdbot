@@ -67,11 +67,31 @@ export default function NewCallPage() {
     if (!isValid) return;
     setIsSubmitting(true);
 
-    // In production: POST to /api/calls
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      const response = await fetch("/api/calls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phoneNumber: phone,
+          companyName: company || undefined,
+          reason: reason || undefined,
+          useSavedPath: useSavedPath && matchingPath ? matchingPath.path : undefined,
+        }),
+      });
 
-    // Navigate to active call monitor
-    router.push("/calls/active");
+      if (!response.ok) {
+        throw new Error("Failed to initiate call");
+      }
+
+      const data = await response.json();
+      
+      // Navigate to active call monitor with call ID
+      router.push(`/calls/active?id=${data.callId}`);
+    } catch (error) {
+      console.error("Error starting call:", error);
+      setIsSubmitting(false);
+      // TODO: Show error toast
+    }
   };
 
   return (
