@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCall, updateCallStatus } from "@/lib/calls";
+import { notifyHumanDetected, getUserNotificationPrefs } from "@/lib/notifications";
 import type { CallStatus } from "@/types";
 
 // POST /api/webhooks/twilio/status - Handle Twilio call status events
@@ -15,8 +16,9 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const twilioStatus = formData.get("CallStatus") as string;
     const callSid = formData.get("CallSid") as string;
+    const answeredBy = formData.get("AnsweredBy") as string;
 
-    console.log(`Call ${callId} status update: ${twilioStatus} (SID: ${callSid})`);
+    console.log(`Call ${callId} status update: ${twilioStatus} (SID: ${callSid}, AnsweredBy: ${answeredBy})`);
 
     const call = getCall(callId);
     if (!call) {
@@ -34,8 +36,22 @@ export async function POST(request: NextRequest) {
         break;
       case "in-progress":
       case "answered":
-        // Call answered - start navigating/holding
-        newStatus = "navigating";
+        // Check if answered by human vs machine
+        if (answeredBy === "human") {
+          // Immediate human detection!
+          newStatus = "human";
+          console.log(`🎉 Human answered directly on call ${callId}`);
+          
+          // Send notifications
+          const prefs = getUserNotificationPrefs(call.userId);
+          notifyHumanDetected(call, prefs).catch(console.error);
+        } else if (answeredBy === "machine_start" || answeredBy === "fax") {
+          // Likely IVR/voicemail
+          newStatus = "navigating";
+        } else {
+          // Unknown - assume navigating for now
+          newStatus = "navigating";
+        }
         break;
       case "completed":
       case "busy":
@@ -49,9 +65,6 @@ export async function POST(request: NextRequest) {
     if (newStatus) {
       updateCallStatus(callId, newStatus);
       console.log(`Updated call ${callId} to status: ${newStatus}`);
-
-      // TODO: Send notifications when human detected
-      // This would be triggered by audio analysis, not status callbacks
     }
 
     return NextResponse.json({ ok: true });

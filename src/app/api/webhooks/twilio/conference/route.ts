@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getCallIdByConference, updateCallStatus, addIVRStep } from "@/lib/calls";
+import { getCallIdByConference, getCall, updateCallStatus, addIVRStep } from "@/lib/calls";
+import { notifyHumanDetected, getUserNotificationPrefs } from "@/lib/notifications";
+
+// Track speech events per call for human detection
+const speechTracker = new Map<string, { 
+  startCount: number; 
+  lastStart: number;
+  consecutiveSpeech: number;
+}>();
 
 // POST /api/webhooks/twilio/conference - Handle conference events
 export async function POST(request: NextRequest) {
   try {
     const url = new URL(request.url);
     const conferenceName = url.searchParams.get("conference");
+    const callIdParam = url.searchParams.get("callId");
 
     if (!conferenceName) {
       return NextResponse.json({ error: "Missing conference name" }, { status: 400 });
@@ -27,7 +36,7 @@ export async function POST(request: NextRequest) {
       muted,
     });
 
-    const callId = getCallIdByConference(conferenceName);
+    const callId = callIdParam || getCallIdByConference(conferenceName);
     if (!callId) {
       console.error(`No call found for conference ${conferenceName}`);
       return NextResponse.json({ ok: true });
@@ -37,6 +46,8 @@ export async function POST(request: NextRequest) {
       case "participant-join":
         // Participant joined the conference
         console.log(`Participant joined conference: ${callSid}`);
+        // Update to holding status when target joins
+        updateCallStatus(callId, "holding");
         break;
 
       case "participant-leave":
@@ -45,19 +56,53 @@ export async function POST(request: NextRequest) {
         break;
 
       case "participant-speech-start":
-        // Speech detected - could be human answering
+        // Speech detected - track for human detection
         console.log(`Speech started in conference`);
-        // TODO: Analyze audio to determine if human vs IVR
+        
+        let tracker = speechTracker.get(callId);
+        if (!tracker) {
+          tracker = { startCount: 0, lastStart: Date.now(), consecutiveSpeech: 0 };
+          speechTracker.set(callId, tracker);
+        }
+        
+        tracker.startCount++;
+        tracker.lastStart = Date.now();
+        tracker.consecutiveSpeech++;
+        
+        // After sustained speech (3+ speech events), might be human
+        // This is a simple heuristic - IVR tends to have long pauses between prompts
+        if (tracker.consecutiveSpeech >= 3) {
+          const call = getCall(callId);
+          if (call && call.status !== "human" && call.status !== "live") {
+            // Mark as potential human detection
+            console.log(`🎉 Potential human detected on call ${callId}`);
+            updateCallStatus(callId, "human");
+            
+            // Send notifications
+            const prefs = getUserNotificationPrefs(call.userId);
+            notifyHumanDetected(call, prefs).catch(console.error);
+          }
+        }
         break;
 
       case "participant-speech-stop":
-        // Speech ended
+        // Speech ended - reset consecutive counter after pause
         console.log(`Speech stopped in conference`);
+        
+        // Short delay before resetting - allows for natural pauses
+        setTimeout(() => {
+          const t = speechTracker.get(callId);
+          if (t && Date.now() - t.lastStart > 5000) {
+            // More than 5 seconds since last speech start - reset
+            t.consecutiveSpeech = 0;
+          }
+        }, 5000);
         break;
 
       case "conference-end":
         // Conference ended
         updateCallStatus(callId, "ended");
+        speechTracker.delete(callId);
         break;
     }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCall, updateCallStatus } from "@/lib/calls";
+import { getTwilioClient } from "@/lib/twilio/client";
 
 // GET /api/calls/[id] - Get call status
 export async function GET(
@@ -35,7 +36,7 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { action } = body;
+    const { action, conferenceSid, participantSid } = body;
 
     const call = getCall(id);
     if (!call) {
@@ -45,15 +46,47 @@ export async function PATCH(
       );
     }
 
+    const client = getTwilioClient();
+
     switch (action) {
       case "unmute":
-        // In production: unmute user in Twilio conference
+        // Unmute user in Twilio conference
         updateCallStatus(id, "live");
+        
+        // If we have conference/participant info, unmute via API
+        if (conferenceSid && participantSid) {
+          try {
+            await client.conferences(conferenceSid)
+              .participants(participantSid)
+              .update({ muted: false });
+          } catch (e) {
+            console.error("Failed to unmute via Twilio:", e);
+          }
+        }
         break;
+        
       case "end":
-        // In production: end all conference legs
+        // End all conference legs
         updateCallStatus(id, "ended");
+        
+        // End the conference if we have the SID
+        if (conferenceSid) {
+          try {
+            await client.conferences(conferenceSid)
+              .update({ status: "completed" });
+          } catch (e) {
+            console.error("Failed to end conference via Twilio:", e);
+          }
+        }
         break;
+        
+      case "simulate-human":
+        // Demo mode: simulate human detection
+        if (process.env.DEMO_MODE === "true") {
+          updateCallStatus(id, "human");
+        }
+        break;
+        
       default:
         return NextResponse.json(
           { error: "Invalid action" },
