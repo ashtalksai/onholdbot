@@ -1,48 +1,24 @@
-# OnHoldBot Dockerfile for Coolify deployment
-FROM node:22-alpine AS base
-
-# Install dependencies only when needed
-FROM base AS deps
-RUN apk add --no-cache libc6-compat
+FROM node:22-alpine AS deps
+RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
-# Install dependencies based on the preferred package manager
-COPY package.json pnpm-lock.yaml* ./
-RUN corepack enable pnpm && pnpm i --frozen-lockfile
-
-# Rebuild the source code only when needed
-FROM base AS builder
+FROM node:22-alpine AS builder
+RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npx prisma generate 2>/dev/null; pnpm run build
 
-# Next.js collects anonymous telemetry data - disable it
-ENV NEXT_TELEMETRY_DISABLED=1
-
-# Build the application
-RUN corepack enable pnpm && pnpm run build
-
-# Production image, copy all the files and run next
-FROM base AS runner
+FROM node:22-alpine
+RUN apk add --no-cache curl
 WORKDIR /app
-
 ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-COPY --from=builder /app/public ./public
-
-# Automatically leverage output traces to reduce image size
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-
-EXPOSE 3000
-
+ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+EXPOSE 3000
 CMD ["node", "server.js"]
